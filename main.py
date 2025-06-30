@@ -248,7 +248,7 @@ async def handle_password(update: Update, context: CallbackContext):
 
 # === Основной запуск ===
 def main():
-    updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
+    updater = Updater(TELEGRAM_BOT_TOKEN)
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
