@@ -8,15 +8,13 @@ import re
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-
-# Используйте правильный импорт:
 from telegram.ext import (
-    Updater,
+    ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    CallbackContext,
+    ContextTypes,
     MessageHandler,
-    filters  # ← Новый импорт вместо Filters
+    filters
 )
 
 # === Константы конфигурации ===
@@ -248,16 +246,17 @@ async def handle_password(update: Update, context: CallbackContext):
 
 # === Основной запуск ===
 def main():
-    updater = Updater(TELEGRAM_BOT_TOKEN)
-    dp = updater.dispatcher
+    # Создаём приложение через ApplicationBuilder
+    application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CallbackQueryHandler(button_handler))
-    dp.add_handler(MessageHandler(filters.text & ~filters.command, handle_password))  # ← Используем filters
+    # Добавляем обработчики
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.text & ~filters.command, handle_password))
 
+    # Запускаем бота
     logger.info("Бот запущен...")
-    updater.start_polling()
-    updater.idle()
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
