@@ -12,7 +12,7 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes,
+    ContextTypes,  # ← Используем это вместо CallbackContext
     MessageHandler,
     filters
 )
@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 last_request_time = 0
 
 # === Функция для плавного вывода текста ===
-async def stream_message(update: Update, context: CallbackContext, full_text: str):
+async def stream_message(update: Update, context: ContextTypes.DEFAULT_TYPE, full_text: str):
     chat_id = update.effective_chat.id
     message = None
     current_text = ""
@@ -165,7 +165,7 @@ async def send_api_request(payload, headers):
     raise Exception("Не удалось выполнить запрос после нескольких попыток")
 
 # === Команды Telegram ===
-async def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🍰 Старт", callback_data='start_ai')],
         [InlineKeyboardButton("🔐 Админ-панель", callback_data='admin_login')],
@@ -180,7 +180,7 @@ async def start(update: Update, context: CallbackContext):
         reply_markup=reply_markup
     )
 
-async def button_handler(update: Update, context: CallbackContext):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
@@ -215,7 +215,7 @@ async def button_handler(update: Update, context: CallbackContext):
         user_sessions[user_id] = {"state": "awaiting_password"}
         await query.edit_message_text(text="🔒 Введите пароль для доступа к режиму администратора:")
 
-async def handle_password(update: Update, context: CallbackContext):
+async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_sessions.get(user_id, {}).get("state") == "awaiting_password":
         password = update.message.text.strip()
