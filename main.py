@@ -7,14 +7,16 @@ import requests
 import re
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode  # ← Правильный импорт ParseMode
+from telegram.constants import ParseMode
+
+# Используйте правильный импорт:
 from telegram.ext import (
     Updater,
     CommandHandler,
     CallbackQueryHandler,
     CallbackContext,
     MessageHandler,
-    Filters
+    filters  # ← Новый импорт вместо Filters
 )
 
 # === Константы конфигурации ===
@@ -251,7 +253,7 @@ def main():
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CallbackQueryHandler(button_handler))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_password))
+    dp.add_handler(MessageHandler(filters.text & ~filters.command, handle_password))  # ← Используем filters
 
     logger.info("Бот запущен...")
     updater.start_polling()
