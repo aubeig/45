@@ -6,7 +6,8 @@ import asyncio
 import requests
 import re
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ParseMode
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode  # ← Правильный импорт ParseMode
 from telegram.ext import (
     Updater,
     CommandHandler,
@@ -61,7 +62,7 @@ logger = logging.getLogger(__name__)
 last_request_time = 0
 
 # === Функция для плавного вывода текста ===
-async def stream_message(update: Update, context: ContextTypes.DEFAULT_TYPE, full_text: str):
+async def stream_message(update: Update, context: CallbackContext, full_text: str):
     chat_id = update.effective_chat.id
     message = None
     current_text = ""
