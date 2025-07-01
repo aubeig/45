@@ -142,18 +142,24 @@ async def handle_update(update: dict):
     elif text == "/admin":
         await send_message(chat_id, "🔒 Введите пароль для доступа к режиму администратора:")
 
-    elif text == "illovyly":
-        payload = {
-            "model": MODEL,
-            "messages": [{"role": "system", "content": ADMIN_PROMPT}],
-            "temperature": 0.7
-        }
-        try:
-            response = send_api_request(payload)
-            content = response["choices"][0]["message"]["content"]
-            await stream_message({"message": {"chat": {"id": chat_id}}, {}, content)
-        except Exception as e:
-            await send_message(chat_id, f"❌ Ошибка: {e}")
+elif text == "illovyly":
+    payload = {
+        "model": MODEL,
+        "messages": [{"role": "system", "content": ADMIN_PROMPT}],
+        "temperature": 0.7
+    }
+    try:
+        response = send_api_request(payload)
+        content = response["choices"][0]["message"]["content"]
+        await stream_message({
+            "message": {
+                "chat": {
+                    "id": chat_id
+                }
+            }
+        }, {}, content)  # Или передать пустой словарь как context
+    except Exception as e:
+        await send_message(chat_id, f"❌ Ошибка: {e}")
 
     elif text.startswith("/"):
         await send_message(chat_id, "Неизвестная команда 😕")
