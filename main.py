@@ -5,18 +5,10 @@ import logging
 import asyncio
 import json
 from http.client import HTTPSConnection
-from urllib.parse import urljoin, urlencode
+from urllib.parse import urlencode
+from typing import Optional, Dict, Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
-from telegram.bot import Bot
-from telegram.ext.callbackcontext import ContextTypes
-from telegram.ext.callbackqueryhandler import CallbackQueryHandler
-from telegram.ext.commandhandler import CommandHandler
-from telegram.ext.messagehandler import MessageHandler
-from telegram.ext.filters import Filters
-
-# === Константы конфигурации ===
+# === Константы ===
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_OPENROUTER_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
 API_URL = "/api/v1/chat/completions"
@@ -61,156 +53,127 @@ logger = logging.getLogger(__name__)
 last_request_time = 0
 
 # === Функция для плавного вывода текста ===
-async def stream_message(update: Update, context: ContextTypes.DEFAULT_TYPE, full_text: str):
-    chat_id = update.effective_chat.id
+async def stream_message(update: dict, context: dict, full_text: str):
+    chat_id = update["message"]["chat"]["id"]
+    message = await send_message(chat_id, "💭 Думаю...")
+
     current_text = ""
     last_update = 0
     min_update_interval = 0.3
     chunk_size = 20
 
-    try:
-        message = await context.bot.send_message(chat_id=chat_id, text="💭 Думаю...", parse_mode=ParseMode.MARKDOWN)
+    for i in range(0, len(full_text), chunk_size):
+        chunk = full_text[i:i + chunk_size]
+        current_text += chunk
 
-        # Постепенный вывод текста
-        for i in range(0, len(full_text), chunk_size):
-            chunk = full_text[i:i + chunk_size]
-            current_text += chunk
+        current_time = time.time()
+        if current_time - last_update >= min_update_interval:
+            await edit_message(chat_id, message["message_id"], current_text + "▌")
+            last_update = current_time
+        await asyncio.sleep(0.05)
 
-            # Обновляем не чаще чем min_update_interval
-            current_time = time.time()
-            if current_time - last_update >= min_update_interval:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message.message_id,
-                    text=current_text + "▌",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                last_update = current_time
-            await asyncio.sleep(0.05)
+    await edit_message(chat_id, message["message_id"], full_text)
 
-        # Финальное сообщение
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message.message_id,
-            text=full_text,
-            parse_mode=ParseMode.MARKDOWN
-        )
+async def edit_message(chat_id: int, message_id: int, text: str):
+    return await send_telegram_request(
+        "editMessageText",
+        {"chat_id": chat_id, "message_id": message_id, "text": text}
+    )
 
-    except Exception as e:
-        logger.error(f"Ошибка в stream_message: {e}")
-        await update.message.reply_text(full_text, parse_mode=ParseMode.MARKDOWN)
-
-# === Функция для отправки запроса на OpenRouter через http.client ===
-def send_api_request(payload: dict, headers: dict):
+# === Функция для отправки запроса к OpenRouter ===
+def send_api_request(payload: dict):
     global last_request_time
 
-    # Ограничение частоты запросов (1 раз в секунду)
     current_time = time.time()
     if current_time - last_request_time < 1.0:
         time.sleep(1.0 - (current_time - last_request_time))
-
-    last_request_time = current_time
+    last_request_time = time.time()
 
     conn = HTTPSConnection("openrouter.ai")
     headers = {
-        "Authorization": f"Bearer {headers['Authorization']}",
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://aubeig.github.io/Minisir_ai",
         "X-Title": "Minisir_ai",
     }
-
     conn.request("POST", "/api/v1/chat/completions", body=json.dumps(payload), headers=headers)
-
     response = conn.getresponse()
     if response.status == 200:
         return json.loads(response.read())
     else:
         raise Exception(f"API вернул код {response.status}: {response.read().decode()}")
 
-# === Команды Telegram ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("🍰 Старт", callback_data='start_ai')],
-        [InlineKeyboardButton("🔐 Админ-панель", callback_data='admin_login')],
-        [InlineKeyboardButton("🆘 Техподдержка", url="https://t.me/@Aubeig")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+# === Функции для работы с Telegram API напрямую (без python-telegram-bot) ===
+async def send_telegram_request(method: str, data: dict):
+    token = TELEGRAM_BOT_TOKEN
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    headers = {"Content-Type": "application/json"}
+    conn = HTTPSConnection("api.telegram.org")
+    conn.request("POST", f"/bot{token}/{method}", body=json.dumps(data), headers=headers)
+    response = conn.getresponse()
+    if response.status != 200:
+        raise Exception(f"Telegram API error: {response.read().decode()}")
+    return json.loads(response.read().decode())
 
-    await update.message.reply_text(
-        "👋 Привет! Я Мини-сырок 🍰\n"
-        "Нажми на кнопку ниже, чтобы начать общение!\n"
-        "Я помогу с учебой, задачами, творчеством и даже расскажу интересные факты 🧠✨",
-        reply_markup=reply_markup
-    )
+# === Функция для отправки сообщений ===
+async def send_message(chat_id: int, text: str):
+    return await send_telegram_request("sendMessage", {"chat_id": chat_id, "text": text})
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+# === Обработка команд ===
+async def handle_update(update: dict):
+    message = update.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text", "")
 
-    if query.data == 'start_ai':
-        await query.edit_message_text(text="🍰 Инициализирую Мини-сырка...")
-        await query.edit_message_text(text="💭 Думаю...")
+    if text == "/start":
+        keyboard = [
+            [{"text": "🍰 Старт", "callback_data": "start_ai"}],
+            [{"text": "🔐 Админ-панель", "callback_data": "admin_login"}],
+            [{"text": "🆘 Техподдержка", "url": "https://t.me/@Aubeig"}]
+        ]
+        await send_telegram_request("sendMessage", {
+            "chat_id": chat_id,
+            "text": "👋 Привет! Я Мини-сырок 🍰\n"
+                    "Нажми на кнопку ниже, чтобы начать общение!\n"
+                    "Я помогу с учебой, задачами, творчеством и даже расскажу интересные факты 🧠✨",
+            "reply_markup": {"inline_keyboard": keyboard}
+        })
 
+    elif text == "/admin":
+        await send_message(chat_id, "🔒 Введите пароль для доступа к режиму администратора:")
+
+    elif text == "illovyly":
         payload = {
             "model": MODEL,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT}],
-            "temperature": 0.7,
-            "stream": True
+            "messages": [{"role": "system", "content": ADMIN_PROMPT}],
+            "temperature": 0.7
         }
-
-        headers = {
-            "Authorization": OPENROUTER_API_KEY
-        }
-
         try:
-            response = send_api_request(payload, headers)
+            response = send_api_request(payload)
             content = response["choices"][0]["message"]["content"]
-            await stream_message(update, context, content)
+            await stream_message({"message": {"chat": {"id": chat_id}}, {}, content)
         except Exception as e:
-            await query.edit_message_text(text=f"❌ Ошибка: {e}")
+            await send_message(chat_id, f"❌ Ошибка: {e}")
 
-    elif query.data == 'admin_login':
-        user_id = update.effective_user.id
-        user_sessions[user_id] = {"state": "awaiting_password"}
-        await query.edit_message_text(text="🔒 Введите пароль для доступа к режиму администратора:")
+    elif text.startswith("/"):
+        await send_message(chat_id, "Неизвестная команда 😕")
 
-async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_sessions.get(user_id, {}).get("state") == "awaiting_password":
-        password = update.message.text.strip()
+    else:
+        await send_message(chat_id, f"Вы написали: {text}")
 
-        if password == ADMIN_PASSWORD:
-            user_sessions[user_id] = {"state": "admin_logged_in"}
-            payload = {
-                "model": MODEL,
-                "messages": [{"role": "system", "content": ADMIN_PROMPT}],
-                "temperature": 0.7
-            }
-
-            headers = {
-                "Authorization": OPENROUTER_API_KEY
-            }
-
-            try:
-                response = send_api_request(payload, headers)
-                content = response["choices"][0]["message"]["content"]
-                await stream_message(update, context, content)
-            except Exception as e:
-                await update.message.reply_text(f"❌ Ошибка: {e}")
-        else:
-            await update.message.reply_text("❌ Неверный пароль. Попробуйте еще раз.")
-        user_sessions.pop(user_id, None)
-
-# === Основной запуск ===
+# === Основной цикл ===
 async def main():
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
-
-    bot.add_handler(CommandHandler("start", start))
-    bot.add_handler(CallbackQueryHandler(button_handler))
-    bot.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_password))
-
-    logger.info("Бот запущен...")
-    await bot.start_polling()
+    offset = 0
+    while True:
+        try:
+            response = await send_telegram_request("getUpdates", {"offset": offset})
+            for update in response.get("result", []):
+                await handle_update(update)
+                offset = update.get("update_id", offset) + 1
+            await asyncio.sleep(1.0)
+        except Exception as e:
+            logger.error(f"Ошибка: {e}")
+            await asyncio.sleep(5)
 
 # === Запуск ===
 if __name__ == "__main__":
