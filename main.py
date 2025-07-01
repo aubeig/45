@@ -3,8 +3,9 @@ import os
 import time
 import logging
 import asyncio
-import requests
-import re
+import json
+from http.client import HTTPSConnection
+from urllib.parse import urljoin, urlencode
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -18,7 +19,7 @@ from telegram.ext.filters import Filters
 # === Константы конфигурации ===
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_OPENROUTER_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
-API_URL = "https://openrouter.ai/api/v1/chat/completions"
+API_URL = "/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"
 
 # === Системные промпты ===
@@ -75,6 +76,7 @@ async def stream_message(update: Update, context: ContextTypes.DEFAULT_TYPE, ful
             chunk = full_text[i:i + chunk_size]
             current_text += chunk
 
+            # Обновляем не чаще чем min_update_interval
             current_time = time.time()
             if current_time - last_update >= min_update_interval:
                 await context.bot.edit_message_text(
@@ -86,6 +88,7 @@ async def stream_message(update: Update, context: ContextTypes.DEFAULT_TYPE, ful
                 last_update = current_time
             await asyncio.sleep(0.05)
 
+        # Финальное сообщение
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message.message_id,
@@ -97,45 +100,32 @@ async def stream_message(update: Update, context: ContextTypes.DEFAULT_TYPE, ful
         logger.error(f"Ошибка в stream_message: {e}")
         await update.message.reply_text(full_text, parse_mode=ParseMode.MARKDOWN)
 
-# === Функция для отправки запроса с ретраями ===
-async def send_api_request(payload, headers):
+# === Функция для отправки запроса на OpenRouter через http.client ===
+def send_api_request(payload: dict, headers: dict):
     global last_request_time
-    max_retries = 3
-    retry_delay = 1.5
 
-    for attempt in range(max_retries):
-        try:
-            current_time = time.time()
-            if current_time - last_request_time < 1.0:
-                await asyncio.sleep(1.0 - (current_time - last_request_time))
-            last_request_time = time.time()
+    # Ограничение частоты запросов (1 раз в секунду)
+    current_time = time.time()
+    if current_time - last_request_time < 1.0:
+        time.sleep(1.0 - (current_time - last_request_time))
 
-            response = requests.post(API_URL, json=payload, headers=headers, timeout=30)
-            response.raise_for_status()
-            return response.json()
+    last_request_time = current_time
 
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:
-                logger.warning(f"Ошибка 429. Попытка {attempt+1}/{max_retries}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(retry_delay * (2 ** attempt))
-                    continue
-                else:
-                    raise Exception("Превышено количество запросов к API")
-            elif e.response.status_code == 401:
-                logger.error("Ошибка 401: Неверная аутентификация")
-                raise Exception("Неверный API-ключ OpenRouter") from e
-            else:
-                raise
-        except Exception as e:
-            logger.warning(f"Сетевая ошибка: {e}. Попытка {attempt+1}/{max_retries}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(retry_delay)
-                continue
-            else:
-                raise
+    conn = HTTPSConnection("openrouter.ai")
+    headers = {
+        "Authorization": f"Bearer {headers['Authorization']}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://aubeig.github.io/Minisir_ai",
+        "X-Title": "Minisir_ai",
+    }
 
-    raise Exception("Не удалось выполнить запрос после нескольких попыток")
+    conn.request("POST", "/api/v1/chat/completions", body=json.dumps(payload), headers=headers)
+
+    response = conn.getresponse()
+    if response.status == 200:
+        return json.loads(response.read())
+    else:
+        raise Exception(f"API вернул код {response.status}: {response.read().decode()}")
 
 # === Команды Telegram ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -168,10 +158,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "stream": True
         }
 
-        headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
+        headers = {
+            "Authorization": OPENROUTER_API_KEY
+        }
 
         try:
-            response = await send_api_request(payload, headers)
+            response = send_api_request(payload, headers)
             content = response["choices"][0]["message"]["content"]
             await stream_message(update, context, content)
         except Exception as e:
@@ -195,10 +187,12 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "temperature": 0.7
             }
 
-            headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
+            headers = {
+                "Authorization": OPENROUTER_API_KEY
+            }
 
             try:
-                response = await send_api_request(payload, headers)
+                response = send_api_request(payload, headers)
                 content = response["choices"][0]["message"]["content"]
                 await stream_message(update, context, content)
             except Exception as e:
